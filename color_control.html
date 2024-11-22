@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Check-in Camera</title>
+    <meta name="permissions-policy" content="camera=*">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #fffcf7;
+        }
+
+        #camera-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            width: 100%;
+            max-width: 640px;
+            padding: 20px;
+        }
+
+        #video {
+            width: 100%;
+            border-radius: 15px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        #status {
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+        }
+
+        .connected { 
+            background-color: #d4edda; 
+            color: #155724; 
+        }
+
+        .disconnected { 
+            background-color: #f8d7da; 
+            color: #721c24; 
+        }
+
+        #canvas {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="camera-container">
+        <video id="video" autoplay playsinline></video>
+        <canvas id="canvas"></canvas>
+        <div id="status" class="disconnected">Disconnected</div>
+        <div id="location-info" style="
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            margin-top: 10px;
+            background-color: #d4edda;
+            color: #155724;
+        ">Getting location...</div>
+    </div>
+
+    <script>
+        let ws;
+        let stream;
+        let isStreaming = false;
+        let currentLocation = null;
+        
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const status = document.getElementById('status');
+
+        async function startCamera() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { 
+                        facingMode: 'user',
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                });
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    video.play();
+                    isStreaming = true;
+                    startSendingFrames();
+                };
+            } catch (err) {
+                console.error('Camera error:', err);
+                status.textContent = 'Camera error: ' + err.message;
+            }
+        }
+
+        function startSendingFrames() {
+            const context = canvas.getContext('2d');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            function sendFrame() {
+                if (!isStreaming) return;
+                
+                context.drawImage(video, 0, 0);
+                const imageData = canvas.toDataURL('image/jpeg', 0.7);
+                
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        action: 'sendFrame',
+                        image: imageData,
+                        location: currentLocation
+                    }));
+                }
+            }
+
+            sendFrame();
+        }
+
+        function connect() {
+            const host = window.location.hostname;
+            const port = window.location.port;
+            
+            ws = new WebSocket(`wss://${host}:${port}/ws`);
+
+            ws.onopen = () => {
+                console.log("WebSocket connected");
+                status.textContent = 'Connected';
+                status.className = 'connected';
+                startCamera();
+                getLocation();
+                setInterval(getLocation, 5000);
+                sendFrame();
+            };
+
+            ws.onclose = () => {
+                console.log("WebSocket closed");
+                status.textContent = 'Disconnected';
+                status.className = 'disconnected';
+                isStreaming = false;
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                }
+                setTimeout(connect, 2000);
+            };
+
+            ws.onerror = (error) => {
+                console.error("WebSocket error:", error);
+                status.textContent = 'Connection error';
+                status.className = 'disconnected';
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.action === 'frameProcessed') {
+                        if (isStreaming) {
+                            // Add guidance message container if it doesn't exist
+                            if (!document.getElementById('guidance-message')) {
+                                const guidanceMsg = document.createElement('div');
+                                guidanceMsg.id = 'guidance-message';
+                                guidanceMsg.style.position = 'fixed';
+                                guidanceMsg.style.top = '20px';
+                                guidanceMsg.style.left = '50%';
+                                guidanceMsg.style.transform = 'translateX(-50%)';
+                                guidanceMsg.style.textAlign = 'center';
+                                guidanceMsg.style.padding = '15px';
+                                guidanceMsg.style.backgroundColor = '#fff3cd';
+                                guidanceMsg.style.color = '#856404';
+                                guidanceMsg.style.borderRadius = '10px';
+                                guidanceMsg.style.fontSize = '18px';
+                                guidanceMsg.style.fontWeight = 'bold';
+                                guidanceMsg.style.zIndex = '1000';
+                                guidanceMsg.innerHTML = 'Tips:<br>• Keep your face centered and well-lit<br>• Try different angles if verification fails<br>• Ensure your face is clearly visible';
+                                document.body.appendChild(guidanceMsg);
+                            }
+
+                            setTimeout(() => {
+                                const context = canvas.getContext('2d');
+                                context.drawImage(video, 0, 0);
+                                const imageData = canvas.toDataURL('image/jpeg', 0.7);
+                                
+                                if (ws && ws.readyState === WebSocket.OPEN) {
+                                    ws.send(JSON.stringify({
+                                        action: 'sendFrame',
+                                        image: imageData,
+                                        location: currentLocation
+                                    }));
+                                }
+                            }, 200);
+                        }
+                    } else if (data.action === 'captureLastFrame') {
+                        // Capture and send final frame
+                        const context = canvas.getContext('2d');
+                        context.drawImage(video, 0, 0);
+                        const imageData = canvas.toDataURL('image/jpeg', 0.7);
+                        
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({
+                                action: 'finalFrame',
+                                image: imageData,
+                                location: currentLocation
+                            }));
+                        }
+                    } else if (data.action === 'checkInEnded') {
+                        // Stop streaming and camera
+                        isStreaming = false;
+                        if (stream) {
+                            stream.getTracks().forEach(track => track.stop());
+                        }
+                        
+                        // Clear existing content
+                        document.body.innerHTML = '';
+                        
+                        // Create centered message container
+                        const messageContainer = document.createElement('div');
+                        messageContainer.style.position = 'fixed';
+                        messageContainer.style.top = '50%';
+                        messageContainer.style.left = '50%';
+                        messageContainer.style.transform = 'translate(-50%, -50%)';
+                        messageContainer.style.textAlign = 'center';
+                        messageContainer.style.padding = '30px';
+                        messageContainer.style.backgroundColor = '#f8d7da';
+                        messageContainer.style.color = '#721c24';
+                        messageContainer.style.borderRadius = '10px';
+                        messageContainer.style.fontSize = '24px';
+                        messageContainer.style.fontWeight = 'bold';
+                        messageContainer.innerHTML = 'Check-in verification completed.<br>You may close this window now.';
+                        
+                        document.body.appendChild(messageContainer);
+                        
+                        // Close WebSocket connection
+                        if (ws) {
+                            ws.close();
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error processing message:', error);
+                }
+            };
+        }
+
+        async function getLocation() {
+            try {
+                const position = await new Promise((resolve, reject) => {
+                    navigator.geolocation.getCurrentPosition(resolve, reject, {
+                        enableHighAccuracy: true,
+                        timeout: 5000,
+                        maximumAge: 0
+                    });
+                });
+                
+                currentLocation = {
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude
+                };
+                
+                // Send location data to server
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        action: 'updateLocation',
+                        location: currentLocation
+                    }));
+                }
+                
+                document.getElementById('location-info').textContent = 
+                    `Location: ${currentLocation.latitude.toFixed(6)}°N, ${currentLocation.longitude.toFixed(6)}°E`;
+                    
+            } catch (err) {
+                console.error('Location error:', err);
+                document.getElementById('location-info').textContent = 'Location access denied';
+            }
+        }
+
+        connect();
+    </script>
+</body>
+</html> 

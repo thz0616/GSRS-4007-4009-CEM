@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Track My Location</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+</head>
+<body>
+    <h1>Tracking GPS Location</h1>
+    <p id="status">Initializing...</p>
+
+    <script>
+        // Function to send GPS data to the server
+        function sendLocation(latitude, longitude) {
+            console.log(`Sending location: ${latitude}, ${longitude}`);
+            fetch('/location', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ latitude, longitude })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Server response:', data);
+                document.getElementById('status').innerText = data.status === "success" ? 
+                    `Location sent successfully: ${latitude}, ${longitude}` : 
+                    `Failed to send location: ${data.message}`;
+            })
+            .catch(error => {
+                console.error('Error sending location:', error);
+                document.getElementById('status').innerText = 'Error sending location data.';
+            });
+        }
+
+        // Request user's location on page load
+        window.onload = function() {
+            console.log('Page loaded, requesting geolocation');
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const lat = position.coords.latitude;
+                        const lon = position.coords.longitude;
+                        console.log(`Location obtained: ${lat}, ${lon}`);
+                        document.getElementById('status').innerText = `Location obtained: ${lat}, ${lon}`;
+                        sendLocation(lat, lon);
+                    },
+                    (error) => {
+                        console.error('Error retrieving location:', error);
+                        document.getElementById('status').innerText = `Error retrieving your location: ${error.message}`;
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 5000,
+                        maximumAge: 0
+                    }
+                );
+            } else {
+                console.error('Geolocation is not supported');
+                document.getElementById('status').innerText = 'Geolocation is not supported by your browser.';
+            }
+        };
+    </script>
+</body>
+</html>

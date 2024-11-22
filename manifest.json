@@ -1,0 +1,10 @@
+{
+  "name": "Color Control Camera App",
+  "short_name": "ColorCam",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#000000",
+  "permissions": ["camera"],
+  "icons": []
+} 
